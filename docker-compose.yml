@@ -1,0 +1,56 @@
+name: photo-up
+
+services:
+  # --------------------------------------------------------------------------
+  # MySQL — persistent data lives in ./MySQL data on the host.
+  # --------------------------------------------------------------------------
+  db:
+    image: mysql:8.4
+    container_name: photoup-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set it in .env}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-photoup}
+      MYSQL_USER: ${MYSQL_USER:-photoup}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set it in .env}
+    volumes:
+      - "./MySQL data:/var/lib/mysql"
+      - "./photo-up/server/init.sql:/docker-entrypoint-initdb.d/init.sql:ro"
+    ports:
+      # Exposed only on loopback for local debugging/tools.
+      - "127.0.0.1:3306:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  # --------------------------------------------------------------------------
+  # PhotoUp app — API + built frontend in one Node image.
+  # Uploaded images persist in ./upload data on the host.
+  # --------------------------------------------------------------------------
+  app:
+    build:
+      context: ./photo-up
+      dockerfile: Dockerfile
+    image: ${DOCKERHUB_NAMESPACE:-local}/photo-up:latest
+    container_name: photoup-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: 3000
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: ${MYSQL_DATABASE:-photoup}
+      DB_USER: ${MYSQL_USER:-photoup}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?Set it in .env}
+      UPLOAD_DIR: /app/uploads
+      PUBLIC_DIR: /app/public
+    ports:
+      - "8080:3000"
+    volumes:
+      - "./upload data:/app/uploads"
