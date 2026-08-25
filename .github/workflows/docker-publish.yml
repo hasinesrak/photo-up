@@ -51,16 +51,19 @@ jobs:
       - id: meta
         name: Compute image names & tags
         run: |
-          GHCR="ghcr.io/${{ github.repository }}"
           {
-            echo "ghcr=$GHCR"
             echo "tags<<EOF"
+            # GHCR always
             echo "$GHCR:latest"
             echo "$GHCR:sha-${GITHUB_SHA::7}"
             if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
               echo "$GHCR:${GITHUB_REF#refs/tags/}"
-              if [ -n "${DOCKERHUB_USERNAME:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
-                echo "docker.io/${DOCKERHUB_USERNAME}/photo-up:latest"
+            fi
+            # Docker Hub when credentials are configured
+            if [ -n "${DOCKERHUB_USERNAME:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+              echo "docker.io/${DOCKERHUB_USERNAME}/photo-up:latest"
+              echo "docker.io/${DOCKERHUB_USERNAME}/photo-up:sha-${GITHUB_SHA::7}"
+              if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
                 echo "docker.io/${DOCKERHUB_USERNAME}/photo-up:${GITHUB_REF#refs/tags/}"
               fi
             fi
