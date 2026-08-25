@@ -51,6 +51,7 @@ jobs:
       - id: meta
         name: Compute image names & tags
         run: |
+          GHCR="ghcr.io/${{ github.repository }}"
           {
             echo "tags<<EOF"
             # GHCR always
