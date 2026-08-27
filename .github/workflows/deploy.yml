@@ -1,0 +1,233 @@
+name: CI/CD
+
+# One pipeline, three sequential stages:
+#   1. check  — typecheck, lint, build, and a live API + MySQL integration test
+#   2. build  — build the Docker image and push it to GHCR (always)
+#   3. deploy — ship the built image to Docker Hub (when secrets are configured)
+#
+# Every credential comes from GitHub Actions secrets — nothing is stored in the repo.
+#   Required secrets: MYSQL_ROOT_PASSWORD, MYSQL_PASSWORD, JWT_SECRET
+#   Optional secrets: DOCKERHUB_USERNAME, DOCKERHUB_TOKEN (enable the Docker Hub deploy)
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────
+  # 1. Check — fail fast on any error before anything is published.
+  # ─────────────────────────────────────────────────────────────────────────
+  check:
+    name: Check (typecheck · lint · build · test)
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD }}
+          MYSQL_DATABASE: photoup
+          MYSQL_USER: photoup
+          MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_NAME: photoup
+      DB_USER: photoup
+      DB_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      UPLOAD_DIR: ${{ github.workspace }}/test-uploads
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: photo-up/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: photo-up
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: photo-up
+        run: pnpm typecheck
+
+      - name: Lint
+        working-directory: photo-up
+        run: pnpm lint
+
+      - name: Build
+        working-directory: photo-up
+        run: pnpm build
+
+      - name: Apply database schema
+        run: |
+          CONTAINER=$(docker ps -q --filter ancestor=mysql:8.4)
+          docker exec -i "$CONTAINER" sh -c 'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD" photoup' < photo-up/server/init.sql
+
+      - name: Install server dependencies
+        working-directory: photo-up/server
+        run: npm install --no-audit --no-fund
+
+      - name: Start API server
+        working-directory: photo-up/server
+        run: |
+          node index.js &
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3000/api/health | grep -q '"database":"up"'; then
+              echo "API is healthy"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "API did not become healthy in time"
+          exit 1
+
+      - name: Integration test (register → login → upload → list → delete)
+        run: |
+          set -e
+          BASE=http://127.0.0.1:3000
+
+          REGISTER=$(curl -fsS -X POST "$BASE/api/auth/register" \
+            -H "Content-Type: application/json" \
+            -d '{"name":"CI Bot","email":"ci@example.com","password":"ci-secret-123"}')
+          TOKEN=$(echo "$REGISTER" | jq -r .token)
+          test "$TOKEN" != "null" && test -n "$TOKEN"
+
+          curl -fsS -X POST "$BASE/api/auth/login" \
+            -H "Content-Type: application/json" \
+            -d '{"email":"ci@example.com","password":"ci-secret-123"}' | jq -e .user.email
+
+          printf 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==' \
+            | base64 -d > /tmp/ci.png
+          UPLOADED=$(curl -fsS -X POST "$BASE/api/photos" \
+            -H "Authorization: Bearer $TOKEN" \
+            -F "photo=@/tmp/ci.png;type=image/png")
+          PHOTO_ID=$(echo "$UPLOADED" | jq -r .photo.id)
+          test -n "$PHOTO_ID" && test "$PHOTO_ID" != "null"
+
+          LIST=$(curl -fsS "$BASE/api/photos" -H "Authorization: Bearer $TOKEN")
+          test "$(echo "$LIST" | jq '.photos | length')" -eq 1
+
+          curl -fsS "$BASE$(echo "$LIST" | jq -r .photos[0].url)" -o /tmp/fetched.png
+          cmp /tmp/ci.png /tmp/fetched.png
+
+          curl -fsS -X DELETE "$BASE/api/photos/$PHOTO_ID" -H "Authorization: Bearer $TOKEN" | jq -e .ok
+          echo "Integration test passed."
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 2. Build — build the Docker image and publish it to GHCR.
+  # ─────────────────────────────────────────────────────────────────────────
+  build:
+    name: Build & push to GHCR
+    needs: check
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: meta
+        run: |
+          GHCR="ghcr.io/${{ github.repository }}"
+          {
+            echo "tags<<EOF"
+            echo "$GHCR:sha-${GITHUB_SHA::7}"
+            if [[ "$GITHUB_REF" == refs/heads/main ]]; then
+              echo "$GHCR:latest"
+            fi
+            if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+              echo "$GHCR:${GITHUB_REF#refs/tags/}"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./photo-up
+          file: ./photo-up/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 3. Deploy — ship the image GHCR just built to Docker Hub.
+  #    Only runs when DOCKERHUB_USERNAME + DOCKERHUB_TOKEN secrets are set.
+  # ─────────────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to Docker Hub
+    needs: build
+    if: github.event_name != 'pull_request' && secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Pull from GHCR, tag, push to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          set -euo pipefail
+          GHCR="ghcr.io/${{ github.repository }}"
+          DOCKERHUB="docker.io/${DOCKERHUB_USERNAME}/photo-up"
+          SHA="sha-${GITHUB_SHA::7}"
+
+          docker pull "$GHCR:$SHA"
+
+          docker tag "$GHCR:$SHA" "$DOCKERHUB:$SHA"
+          docker push "$DOCKERHUB:$SHA"
+
+          if [[ "$GITHUB_REF" == refs/heads/main ]]; then
+            docker tag "$GHCR:$SHA" "$DOCKERHUB:latest"
+            docker push "$DOCKERHUB:latest"
+          fi
+
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+            docker tag "$GHCR:$SHA" "$DOCKERHUB:$VERSION"
+            docker push "$DOCKERHUB:$VERSION"
+          fi
+
+          echo "Published ${DOCKERHUB_USERNAME}/photo-up:$SHA"

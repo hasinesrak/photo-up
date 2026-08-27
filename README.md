@@ -35,16 +35,23 @@ docker compose up -d --build
 
 ## CI/CD (GitHub Actions)
 
-| Workflow | What it does |
+One pipeline (`.github/workflows/deploy.yml`) with three sequential stages —
+nothing is published unless the previous stage passes:
+
+| Stage | What it does |
 |---|---|
-| **CI** (`.github/workflows/ci.yml`) | Typecheck, lint, production build, plus a live integration test: spins up MySQL 8.4 as a service, applies the schema, boots the API, then exercises register → login → upload → list → fetch → delete |
-| **Publish** (`.github/workflows/docker-publish.yml`) | Builds the multi-stage image on every push to `main` / version tags and pushes it to GHCR automatically. If repo secrets `DOCKERHUB_USERNAME` + `DOCKERHUB_TOKEN` are configured, it also pushes to Docker Hub |
+| **1. Check** | Typecheck, lint, production build, plus a live integration test: spins up MySQL 8.4 as a service, applies the schema, boots the API, then exercises register → login → upload → list → fetch → delete |
+| **2. Build** | Builds the multi-stage image and pushes it to GitHub Container Registry (`ghcr.io/<repo>`) as `latest` + `sha-<7>` (and the tag name for `v*` tags). Runs on every push to `main` / version tags |
+| **3. Deploy** | Ships the built image to Docker Hub (`docker.io/<user>/photo-up`). Runs only when repo secrets `DOCKERHUB_USERNAME` + `DOCKERHUB_TOKEN` are configured |
+
+> Pull requests only run the **Check** stage; Build & Deploy run on `main` / tags.
 
 ## Security notes
 
-- Real credentials live only in `.env` (gitignored) locally, and in GitHub Actions
-  repository secrets (`MYSQL_ROOT_PASSWORD`, `MYSQL_PASSWORD`, `JWT_SECRET`,
-  `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`) for CI/CD. `.env.example` is a template.
+- Real credentials live only in GitHub Actions repository secrets —
+  `MYSQL_ROOT_PASSWORD`, `MYSQL_PASSWORD`, `JWT_SECRET`,
+  `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` — and in your local `.env`
+  (gitignored) for development. `.env.example` is a template.
 - Uploads and database files (`upload data/`, `MySQL data/`) are gitignored.
 - Passwords are hashed with bcrypt; sessions use signed JWTs with an expiring TTL.
 
@@ -54,7 +61,7 @@ docker compose up -d --build
 .
 ├── docker-compose.yml       # app + MySQL services, volumes, healthchecks
 ├── .env.example             # configuration template
-├── .github/workflows/       # CI & Docker publish pipelines
+├── .github/workflows/       # one pipeline: check → build → deploy
 └── photo-up/
     ├── Dockerfile           # multi-stage build (Vite build → Node runtime)
     ├── server/              # Express API + MySQL schema (init.sql)
