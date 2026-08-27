@@ -46,6 +46,38 @@ nothing is published unless the previous stage passes:
 
 > Pull requests only run the **Check** stage; Build & Deploy run on `main` / tags.
 
+## GitOps with Argo CD
+
+Argo CD deploys the app to Kubernetes straight from this repo — git is the
+source of truth:
+
+```
+push code → CI builds & pushes image to GHCR
+                          ↓
+Argo CD watches k8s/ in this repo → syncs → cluster rolls it out
+```
+
+- `k8s/photo-up.yaml` — manifests for the stack (namespace, app + MySQL
+  Deployments, Services, PVCs, ConfigMaps, demo Secret)
+- `argocd/application.yaml` — Argo CD Application watching `k8s/` on `main`
+  with automated sync (`selfHeal` + `prune`)
+
+```bash
+# Install Argo CD (fresh cluster):
+kubectl create namespace argocd
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+
+# Reach the UI:
+kubectl port-forward svc/argocd-server -n argocd 8443:443   # https://127.0.0.1:8443
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+
+# Register the app (declarative):
+kubectl apply -f argocd/application.yaml
+```
+
+Deploying a new version only requires changing `k8s/` in git (e.g. the image
+tag) — Argo CD rolls it out automatically and reverts on a bad commit.
+
 ## Security notes
 
 - Real credentials live only in GitHub Actions repository secrets —
