@@ -7,7 +7,7 @@ import { AuthProvider } from "@/components/auth-provider.tsx"
 import { ThemeProvider } from "@/components/theme-provider.tsx"
 import { Toaster } from "@/components/ui/sonner.tsx"
 
-reateRoot(document.getElementById("root")!).render(
+createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ThemeProvider>
       <AuthProvider>

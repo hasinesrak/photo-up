@@ -42,10 +42,11 @@ docker compose up -d --build
 
 ## Security notes
 
-- Real credentials live only in `.env` (gitignored). `.env.example` is a template.
+- Real credentials live only in `.env` (gitignored) locally, and in GitHub Actions
+  repository secrets (`MYSQL_ROOT_PASSWORD`, `MYSQL_PASSWORD`, `JWT_SECRET`,
+  `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`) for CI/CD. `.env.example` is a template.
 - Uploads and database files (`upload data/`, `MySQL data/`) are gitignored.
 - Passwords are hashed with bcrypt; sessions use signed JWTs with an expiring TTL.
-- CI uses throwaway credentials that only exist inside the workflow run.
 
 ## Repository layout
 

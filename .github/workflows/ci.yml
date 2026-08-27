@@ -48,10 +48,10 @@ jobs:
       mysql:
         image: mysql:8.4
         env:
-          MYSQL_ROOT_PASSWORD: ci-root-password
+          MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD }}
           MYSQL_DATABASE: photoup
           MYSQL_USER: photoup
-          MYSQL_PASSWORD: ci-app-password
+          MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
         ports:
           - 3306:3306
         options: >-
@@ -64,9 +64,8 @@ jobs:
       DB_PORT: 3306
       DB_NAME: photoup
       DB_USER: photoup
-      DB_PASSWORD: ci-app-password
-      # CI-only value; production secrets are never committed.
-      JWT_SECRET: ci-only-jwt-secret
+      DB_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
       UPLOAD_DIR: ${{ github.workspace }}/test-uploads
     steps:
       - uses: actions/checkout@v4
