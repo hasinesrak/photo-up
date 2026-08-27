@@ -143,7 +143,7 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write   # needed to commit the image-tag bump back to the repo
       packages: write
     steps:
       - uses: actions/checkout@v4
@@ -180,6 +180,28 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # GitOps: keep the manifest in sync with the freshly built image.
+      # Argo CD watches k8s/ in this repo and rolls out the new tag when
+      # this commit lands. Skips (no commit) if the tag is already current,
+      # which is also what stops the workflow from looping on its own commit.
+      - name: Bump image tag in manifests (GitOps)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          SHA="sha-${GITHUB_SHA::7}"
+          IMAGE="ghcr.io/${{ github.repository }}"
+          sed -i "s#image: ${IMAGE}:.*#image: ${IMAGE}:${SHA}#" k8s/photo-up.yaml
+          if git diff --quiet; then
+            echo "Manifest already points at ${SHA} — nothing to commit."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add k8s/photo-up.yaml
+            git commit -m "gitops: bump photoup-app image to ${SHA}"
+            git push
+            echo "Committed image-tag bump to ${SHA}."
+          fi
 
   # ─────────────────────────────────────────────────────────────────────────
   # 3. Deploy — ship the image GHCR just built to Docker Hub.

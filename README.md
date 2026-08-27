@@ -76,7 +76,11 @@ kubectl apply -f argocd/application.yaml
 ```
 
 Deploying a new version only requires changing `k8s/` in git (e.g. the image
-tag) — Argo CD rolls it out automatically and reverts on a bad commit.
+tag) — Argo CD rolls it out automatically and reverts on a bad commit. And a
+CI step already does that bump for you: on every push to `main` the **build**
+job updates `k8s/photo-up.yaml` to the newly built `sha-<7>` image tag and
+commits it back, so Argo CD continuously rolls out each new image — no manual
+manifest edits needed.
 
 ## Security notes
 
