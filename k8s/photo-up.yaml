@@ -273,6 +273,11 @@ kind: Service
 metadata:
   name: photoup-app
   namespace: photo-up
+  annotations:
+    # k3d has no cloud controller, so LoadBalancer services never get an
+    # external IP → Argo CD would report Health "Progressing" forever.
+    # Ignore the Service's health so the Application shows truly Healthy.
+    argocd.argoproj.io/ignore-healthcheck: "true"
 spec:
   type: LoadBalancer
   selector:
