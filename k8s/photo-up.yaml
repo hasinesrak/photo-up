@@ -197,7 +197,7 @@ spec:
     spec:
       containers:
         - name: app
-          image: ghcr.io/hasinesrak/photo-up:latest
+          image: ghcr.io/hasinesrak/photo-up:sha-aa567df
           imagePullPolicy: Always
           env:
             - name: PORT
