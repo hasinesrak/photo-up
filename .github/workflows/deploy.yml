@@ -13,6 +13,10 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+    # Ignore pure-GitOps commits (only k8s/ changed, e.g. the image-tag bump).
+    # Argo CD picks those up on its own; nothing needs to be rebuilt.
+    paths-ignore:
+      - "k8s/**"
   pull_request:
   workflow_dispatch:
 
