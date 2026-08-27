@@ -1,0 +1,25 @@
+# Argo CD Application — declares that the photo-up k8s manifests in this repo
+# (path: k8s/) must be continuously deployed to the K8s namespace photo-up.
+# Apply with:  kubectl apply -f argocd/application.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: photo-up
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/hasinesrak/photo-up
+    targetRevision: main
+    path: k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: photo-up
+  syncPolicy:
+    automated:
+      selfHeal: true   # drift is corrected back to git state
+      prune: true      # objects removed from git get deleted from cluster
+    syncOptions:
+      - CreateNamespace=true
